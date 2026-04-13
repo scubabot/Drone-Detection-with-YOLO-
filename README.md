@@ -109,7 +109,7 @@ ffmpeg -i ~/Videos/<your_video_file>.webm -vf fps=1 ~/drone_video_frames/frame_%
 
 This produces a folder of `.jpg` images, one per second of video. Adjust `fps=1` to extract more or fewer frames.
 
-> A helper script for this step is available in [`scripts/video_to_frames.py`](scripts/video_to_frames.py)
+> A helper script for this step is available in [`video_to_frames.py`](video_to_frames.py)
 
 ### Step 2 — Upload to Roboflow
 
