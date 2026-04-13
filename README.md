@@ -1,4 +1,4 @@
-# 🚁 Drone Detection System — YOLOv8 on Jetson Orin Nano
+# Drone Detection System — YOLOv8 on Jetson Orin Nano
 
 A full end-to-end computer vision pipeline for real-time drone detection. This project covers everything from dataset preparation and model fine-tuning with YOLOv8x, to image/video inference and live camera testing on a Jetson Orin Nano with ModalAI VOXL hardware. Also includes ROS 2 integration for camera streaming and flight data recording.
 
@@ -8,8 +8,8 @@ A full end-to-end computer vision pipeline for real-time drone detection. This p
 
 1. [Hardware & Software Requirements](#hardware--software-requirements)
 2. [Connecting to the Jetson Orin Nano](#connecting-to-the-jetson-orin-nano)
-3. [Dataset Preparation](#dataset-preparation)
-4. [Model Setup](#model-setup)
+3. [Installing Ultralytics & YOLO on the Jetson](#installing-ultralytics--yolo-on-the-jetson)
+4. [Preparing Your Dataset](#preparing-your-dataset)
 5. [Training the Model](#training-the-model)
 6. [Running Inference](#running-inference)
 7. [Viewing & Transferring Results](#viewing--transferring-results)
@@ -32,6 +32,7 @@ A full end-to-end computer vision pipeline for real-time drone detection. This p
 - Python 3
 - [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics)
 - ROS 2 Jazzy / Foxy
+- `ffmpeg` for frame extraction
 - `nmtui` for WiFi setup
 - `screen` for serial connection
 
@@ -58,7 +59,7 @@ ls /dev/ttyUSB* /dev/ttyACM*
 Connect:
 
 ```bash
-sudo screen [PORT] 115200
+sudo screen <PORT> 115200
 ```
 
 ### Setting Up WiFi via Screen
@@ -72,18 +73,67 @@ Navigate to **"Activate a connection"**, select your network, enter credentials,
 
 ---
 
-## Dataset Preparation
+## Installing Ultralytics & YOLO on the Jetson
 
-Create the project and dataset directories:
+Run these commands on the Jetson after connecting via SSH:
+
+```bash
+pip3 install ultralytics --break-system-packages
+pip3 install torch torchvision --break-system-packages
+```
+
+Verify the install worked:
+
+```bash
+yolo --version
+python3 -c "from ultralytics import YOLO; print('Ultralytics ready')"
+```
+
+---
+
+## Preparing Your Dataset
+
+This project uses a custom drone image dataset built from video footage and labeled in Roboflow.
+
+> **Dataset:** [ADD YOUR ROBOFLOW DATASET LINK HERE]
+>  **Trained Model:** [ADD YOUR MODEL LINK HERE]
+
+### Step 1 — Extract Frames from Video
+
+Use `ffmpeg` to pull one frame per second from your footage:
+
+```bash
+mkdir -p ~/drone_video_frames
+ffmpeg -i ~/Videos/<your_video_file>.webm -vf fps=1 ~/drone_video_frames/frame_%04d.jpg
+```
+
+This produces a folder of `.jpg` images, one per second of video. Adjust `fps=1` to extract more or fewer frames.
+
+> A helper script for this step is available in [`scripts/video_to_frames.py`](scripts/video_to_frames.py)
+
+### Step 2 — Upload to Roboflow
+
+1. Go to [roboflow.com](https://roboflow.com) and open your project
+2. Click **Upload**
+3. Select all images from your frames folder (`Ctrl+A`) and drag them into Roboflow
+
+### Step 3 — Label Images
+
+- Draw bounding boxes around the drone in each image
+- For images with no drone — leave them blank with no boxes (these are useful negative examples)
+- Use **Auto-Label** to speed things up — it uses your existing model to pre-draw boxes for you to review and correct
+
+### Step 4 — Generate & Export Dataset
+
+1. Click **Generate**
+2. Set your train / valid / test split
+3. Click **Export** → choose **YOLOv8** format → download the ZIP
+
+### Step 5 — Set Up Project Folder & Unzip
 
 ```bash
 mkdir -p ~/drone_project/dataset
 cd ~/drone_project
-```
-
-Download your dataset from [Roboflow](https://roboflow.com) as a **YOLOv8 ZIP**, upload it to the device, then unzip:
-
-```bash
 unzip ~/Downloads/<your_dataset_name>.zip -d ~/drone_project/dataset/
 ```
 
@@ -106,25 +156,13 @@ drone_project/
 
 ---
 
-## Model Setup
-
-Download the pretrained YOLOv8x drone detection weights:
-
-```bash
-mkdir -p ~/drone_project
-cd ~/drone_project
-wget https://huggingface.co/doguilmak/Drone-Detection-YOLOv8x/resolve/main/weight/best.pt
-```
-
----
-
 ## Training the Model
 
 Run training from the project directory:
 
 ```bash
 cd ~/drone_project
-yolo detect train model=best.pt data=dataset/data.yaml epochs=50 imgsz=640 batch=4 lr0=0.001 freeze=10
+yolo detect train model=best.pt data=dataset/data.yaml epochs=30 imgsz=640 batch=4 lr0=0.001 freeze=10
 ```
 
 **Parameter breakdown:**
@@ -132,7 +170,7 @@ yolo detect train model=best.pt data=dataset/data.yaml epochs=50 imgsz=640 batch
 | Parameter | Value | Reason |
 |-----------|-------|--------|
 | `model` | `best.pt` | Pretrained weights to fine-tune |
-| `epochs` | `50` | Number of training passes |
+| `epochs` | `30` | Number of training passes |
 | `imgsz` | `640` | Input image resolution |
 | `batch` | `4` | Small batch to avoid out-of-memory on 8GB VRAM |
 | `lr0` | `0.001` | Initial learning rate |
@@ -142,12 +180,12 @@ During training you will see a live table like this:
 
 ```
 Epoch    GPU_mem    box_loss    cls_loss    dfl_loss
-1/50     3.2G       1.523       2.341       1.234
-2/50     3.2G       1.401       2.102       1.198
+1/30     3.2G       1.523       2.341       1.234
+2/30     3.2G       1.401       2.102       1.198
 ...
 ```
 
-Trained weights are saved to: `~/drone_project/runs/detect/train*/weights/best.pt`
+Trained weights are saved to: `~/drone_project/runs/detect/<train_run>/weights/best.pt`
 
 ### Viewing Training Results
 
@@ -200,7 +238,7 @@ yolo detect predict model=runs/detect/<train_run>/weights/best.pt \
 
 ## Viewing & Transferring Results
 
-### Transfer Photos to the Jetson
+### Transfer Images to the Jetson
 
 ```bash
 scp ~/<local_image_folder>/* <username>@<DEVICE_IP>:~/<remote_image_folder>/
@@ -289,7 +327,7 @@ Select your camera topic from the dropdown to wake up the bridge before recordin
 ### Record a Single Topic
 
 ```bash
-ros2 bag record /hires_color -o flight_recording
+ros2 bag record /hires_color -o <recording_name>
 ```
 
 ```bash
@@ -299,7 +337,7 @@ ros2 bag record /tracking_front/image_raw -o <recording_name> --storage mcap
 ### Record Multiple Topics
 
 ```bash
-ros2 bag record /tracking_front /tracking_rear
+ros2 bag record /tracking_front /tracking_rear -o <recording_name>
 ```
 
 Press `Ctrl+C` to stop recording.
@@ -307,7 +345,7 @@ Press `Ctrl+C` to stop recording.
 ### Inspect a Bag File
 
 ```bash
-ros2 bag info flight_recording
+ros2 bag info <recording_name>
 ```
 
 This shows topics recorded, message count, start/end times, and duration.
@@ -315,7 +353,7 @@ This shows topics recorded, message count, start/end times, and duration.
 ### Play Back a Recording
 
 ```bash
-ros2 bag play flight_recording
+ros2 bag play <recording_name>
 ```
 
 In a separate terminal, view the playback:
@@ -336,7 +374,7 @@ ros2 topic echo /tracking_front --field header
 # In another terminal — navigate and record
 cd /data
 mkdir -p my_recordings && cd my_recordings
-ros2 bag record /tracking_front/image_raw -o recording_YYYYMMDD_time
+ros2 bag record /tracking_front/image_raw -o <recording_name>_YYYYMMDD
 ```
 
 ---
@@ -358,26 +396,29 @@ Try copying directly to `~/Desktop/` and then run `ls ~/Desktop/` to confirm.
 **ROS 2 bridge not responding?**
 Make sure `ROS_DOMAIN_ID` matches on both terminals, and that you ran `rqt_image_view` to wake up the bridge before recording.
 
+**Ultralytics not found after install?**
+Try running `pip3 install ultralytics --break-system-packages --upgrade` and restart your terminal session.
+
 ---
 
 ## Project Structure
 
 ```
 drone_project/
-├── dataset/              # Training data (from Roboflow)
-├── runs/                 # Training outputs and inference results
+├── dataset/                   # Training data (from Roboflow)
+├── scripts/
+│   └── video_to_frames.py     # Helper: extract frames from video
+├── runs/                      # Training outputs and inference results
 │   └── detect/
-│       ├── train*/       # Training run folders
-│       └── predict*/     # Inference result folders
-├── weight/
-│   └── best.pt           # Pretrained base weights
-└── results/              # Detection output images
+│       ├── train*/            # Training run folders (weights, plots)
+│       └── predict*/          # Inference result folders
+└── results/                   # Detection output images
 ```
 
 ---
 
 ## Credits
 
-- Pretrained model weights from [doguilmak on Hugging Face](https://huggingface.co/doguilmak/Drone-Detection-YOLOv8x)
-- Dataset sourced from [Roboflow](https://roboflow.com)
+- Dataset labeled and managed with [Roboflow](https://roboflow.com)
 - Detection powered by [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics)
+- Deployed on [NVIDIA Jetson Orin Nano](https://developer.nvidia.com/embedded/jetson-orin-nano-devkit)
